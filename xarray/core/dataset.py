@@ -2060,7 +2060,7 @@ class Dataset(Mapping, ImplementsDatasetReduce, DataWithCoords,
         return self._replace_vars_and_dims(variables, coord_names,
                                            inplace=inplace)
 
-    def expand_dims(self, dim, axis=None):
+    def expand_dims(self, dim, axis=None, expand_coords=False):
         """Return a new object with an additional axis (or axes) inserted at the
         corresponding position in the array shape.
 
@@ -2078,6 +2078,10 @@ class Dataset(Mapping, ImplementsDatasetReduce, DataWithCoords,
             multiple axes are inserted. In this case, dim arguments should be
             the same length list. If axis=None is passed, all the axes will
             be inserted to the start of the result array.
+        expand_coords: bool
+            By default, no dimensions are added to coordinates.
+            Set this to true to add the dimension to the coordinates as well.
+            Relative order will be maintained.
 
         Returns
         -------
@@ -2110,39 +2114,61 @@ class Dataset(Mapping, ImplementsDatasetReduce, DataWithCoords,
         if len(dim) != len(set(dim)):
             raise ValueError('dims should not contain duplicate values.')
 
+
+        result_ndim = len(self.dims) + len(axis)
+
+        for a in axis:
+            if a < -result_ndim or result_ndim - 1 < a:
+                raise IndexError(
+                    'Axis {a} is out of bounds of the expanded'
+                    ' dimension size {dim}.'.format(
+                        a=a, dim=result_ndim))
+
+        axis_pos = [(result_ndim + a) % result_ndim
+                    for a in axis]
+        if len(axis_pos) != len(set(axis_pos)):
+            raise ValueError('axis should not contain duplicate values.')
+
+        # We need to sort them to make sure `axis` equals to the
+        # axis positions of the result array.
+        zip_axis_dim = sorted(zip(axis_pos, dim))
+
+        new_dims = list(self.dims)
+        for a, d in zip_axis_dim:
+            new_dims.insert(a, d)
+
         variables = OrderedDict()
         for k, v in iteritems(self._variables):
             if k not in dim:
-                if k in self._coord_names:  # Do not change coordinates
+                if k in self._coord_names:
                     variables[k] = v
                 else:
-                    result_ndim = len(v.dims) + len(axis)
-                    for a in axis:
-                        if a < -result_ndim or result_ndim - 1 < a:
-                            raise IndexError(
-                                'Axis {a} is out of bounds of the expanded'
-                                ' dimension size {dim}.'.format(
-                                    a=a, v=k, dim=result_ndim))
-
-                    axis_pos = [a if a >= 0 else result_ndim + a
-                                for a in axis]
-                    if len(axis_pos) != len(set(axis_pos)):
-                        raise ValueError('axis should not contain duplicate'
-                                         ' values.')
-                    # We need to sort them to make sure `axis` equals to the
-                    # axis positions of the result array.
-                    zip_axis_dim = sorted(zip(axis_pos, dim))
-
-                    all_dims = list(v.dims)
-                    for a, d in zip_axis_dim:
-                        all_dims.insert(a, d)
+                    all_dims = [d for d in new_dims
+                                if d in [*v.dims, *dim]]
                     variables[k] = v.set_dims(all_dims)
             else:
                 # If dims includes a label of a non-dimension coordinate,
                 # it will be promoted to a 1D coordinate with a single value.
                 variables[k] = v.set_dims(k)
 
-        return self._replace_vars_and_dims(variables, self._coord_names)
+        new_self = self._replace_vars_and_dims(variables, self._coord_names)
+
+        new_coords = {**self.coords}
+        if expand_coords:
+            for coord in new_self.coords:
+                new_coord_dims = [d for d in new_dims
+                                  if d in new_self[coord].coords]
+                new_dims_to_add = [d for d in dim
+                                   if d in new_self[coord].coords and not in new_self[coord].coords]
+                new_axis_to_add = [index for index, d in enumerate(new_coord_dims)
+                                   if d in dim and not in new_self[coord].coords]
+                print(coord)
+                import pdb; pdb.set_trace()
+                if new_dims_to_add:
+                    new_self[coord] = new_self[coord].expand_dims(new_dims_to_add, new_axis_to_add)
+
+        return new_self
+
 
     def set_index(self, append=False, inplace=False, **indexes):
         """Set Dataset (multi-)indexes using one or more existing coordinates or
