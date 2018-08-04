@@ -2141,33 +2141,44 @@ class Dataset(Mapping, ImplementsDatasetReduce, DataWithCoords,
         for k, v in iteritems(self._variables):
             if k not in dim:
                 if k in self._coord_names:
-                    variables[k] = v
+                    all_dims = [d for d in new_dims
+                                if d in self[k].coords]
+                                #if d in v.dims and d != k]
+                    import pdb; pdb.set_trace()
+                    if all_dims:
+                        variables[k] = v.set_dims(all_dims)
+                    else:
+                        variables[k] = v
                 else:
                     all_dims = [d for d in new_dims
                                 if d in [*v.dims, *dim]]
+                    import pdb; pdb.set_trace()
                     variables[k] = v.set_dims(all_dims)
             else:
                 # If dims includes a label of a non-dimension coordinate,
                 # it will be promoted to a 1D coordinate with a single value.
                 variables[k] = v.set_dims(k)
 
+        return self._replace_vars_and_dims(variables, self._coord_names)
+        """
         new_self = self._replace_vars_and_dims(variables, self._coord_names)
 
-        new_coords = {**self.coords}
         if expand_coords:
             for coord in new_self.coords:
                 new_coord_dims = [d for d in new_dims
-                                  if d in new_self[coord].coords]
-                new_dims_to_add = [d for d in dim
-                                   if d in new_self[coord].coords and not in new_self[coord].coords]
-                new_axis_to_add = [index for index, d in enumerate(new_coord_dims)
-                                   if d in dim and not in new_self[coord].coords]
-                print(coord)
+                                  if d in self[coord].coords]
                 import pdb; pdb.set_trace()
+                new_dims_to_add = [d for d in dim
+                                   if d in self[coord].coords and d != coord]
+                new_axis_to_add = [index for index, d in enumerate(new_coord_dims)
+                                   if d in dim]
+                print(coord)
+
                 if new_dims_to_add:
                     new_self[coord] = new_self[coord].expand_dims(new_dims_to_add, new_axis_to_add)
 
         return new_self
+        """
 
 
     def set_index(self, append=False, inplace=False, **indexes):
