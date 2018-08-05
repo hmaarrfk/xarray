@@ -1065,7 +1065,7 @@ class DataArray(AbstractArray, DataWithCoords):
         ds = self._to_temp_dataset().swap_dims(dims_dict)
         return self._from_temp_dataset(ds)
 
-    def expand_dims(self, dim, axis=None, expand_coords=False):
+    def expand_dims(self, dim, axis=None, expand_coords=None):
         """Return a new object with an additional axis (or axes) inserted at
         the corresponding position in the array shape.
 

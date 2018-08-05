@@ -2060,7 +2060,7 @@ class Dataset(Mapping, ImplementsDatasetReduce, DataWithCoords,
         return self._replace_vars_and_dims(variables, coord_names,
                                            inplace=inplace)
 
-    def expand_dims(self, dim, axis=None, expand_coords=False):
+    def expand_dims(self, dim, axis=None, expand_coords=None):
         """Return a new object with an additional axis (or axes) inserted at the
         corresponding position in the array shape.
 
@@ -2078,10 +2078,10 @@ class Dataset(Mapping, ImplementsDatasetReduce, DataWithCoords,
             multiple axes are inserted. In this case, dim arguments should be
             the same length list. If axis=None is passed, all the axes will
             be inserted to the start of the result array.
-        expand_coords: bool
+        expand_coords: list
             By default, no dimensions are added to coordinates.
-            Set this to true to add the dimension to the coordinates as well.
-            Relative order will be maintained.
+            List of coordinates to expand in additon to the dataset.
+            These coordinates cannot be indexing coordinates.
 
         Returns
         -------
@@ -2114,6 +2114,8 @@ class Dataset(Mapping, ImplementsDatasetReduce, DataWithCoords,
         if len(dim) != len(set(dim)):
             raise ValueError('dims should not contain duplicate values.')
 
+        if expand_coords is None:
+            expand_coords = []
 
         result_ndim = len(self.dims) + len(axis)
 
@@ -2141,18 +2143,26 @@ class Dataset(Mapping, ImplementsDatasetReduce, DataWithCoords,
         for k, v in iteritems(self._variables):
             if k not in dim:
                 if k in self._coord_names:
-                    all_dims = [d for d in new_dims
-                                if d in self[k].coords]
-                                #if d in v.dims and d != k]
-                    import pdb; pdb.set_trace()
+                    all_dims = []
+                    if k in expand_coords:
+                        if isinstance(v, IndexVariable):
+                            raise ValueError(
+                                'Cannot expaned an indexing coordinate {k}.'
+                                ''.format(k=k))
+                        # Put the coordinate dimensions in the same relative
+                        # order, but only if they already exist in the
+                        # coordinate
+                        all_dims = [d for d in new_dims
+                                    if d in self[k].coords]
+
                     if all_dims:
                         variables[k] = v.set_dims(all_dims)
                     else:
                         variables[k] = v
+
                 else:
                     all_dims = [d for d in new_dims
                                 if d in [*v.dims, *dim]]
-                    import pdb; pdb.set_trace()
                     variables[k] = v.set_dims(all_dims)
             else:
                 # If dims includes a label of a non-dimension coordinate,
@@ -2160,25 +2170,6 @@ class Dataset(Mapping, ImplementsDatasetReduce, DataWithCoords,
                 variables[k] = v.set_dims(k)
 
         return self._replace_vars_and_dims(variables, self._coord_names)
-        """
-        new_self = self._replace_vars_and_dims(variables, self._coord_names)
-
-        if expand_coords:
-            for coord in new_self.coords:
-                new_coord_dims = [d for d in new_dims
-                                  if d in self[coord].coords]
-                import pdb; pdb.set_trace()
-                new_dims_to_add = [d for d in dim
-                                   if d in self[coord].coords and d != coord]
-                new_axis_to_add = [index for index, d in enumerate(new_coord_dims)
-                                   if d in dim]
-                print(coord)
-
-                if new_dims_to_add:
-                    new_self[coord] = new_self[coord].expand_dims(new_dims_to_add, new_axis_to_add)
-
-        return new_self
-        """
 
 
     def set_index(self, append=False, inplace=False, **indexes):
