@@ -340,16 +340,16 @@ class BasicIndexer(ExplicitIndexer):
             raise TypeError(f"key must be a tuple: {key!r}")
 
         new_key = []
-        for k in key:
-            if isinstance(k, integer_types):
-                k = int(k)
-            elif isinstance(k, slice):
-                k = as_integer_slice(k)
-            else:
-                raise TypeError(
-                    f"unexpected indexer type for {type(self).__name__}: {k!r}"
-                )
-            new_key.append(k)
+        new_key = tuple(
+            int(k) if isinstance(k, integer_types)
+            else as_integer_slice(k) if isinstance(k, slice) else None
+            for k in key
+        )
+        if any(k is None for k in new_key):
+            k = key[new_key.index(None)]
+            raise TypeError(
+                f"unexpected indexer type for {type(self).__name__}: {k!r}"
+            )
 
         super().__init__(new_key)
 
