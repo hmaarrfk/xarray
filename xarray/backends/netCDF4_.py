@@ -54,7 +54,7 @@ NETCDF4_PYTHON_LOCK = combine_locks([NETCDFC_LOCK, HDF5_LOCK])
 
 
 class BaseNetCDF4Array(BackendArray):
-    __slots__ = ("datastore", "dtype", "shape", "variable_name")
+    __slots__ = ("datastore", "dtype", "shape", "variable_name", "ndim", "size")
 
     def __init__(self, variable_name, datastore):
         self.datastore = datastore
@@ -62,6 +62,9 @@ class BaseNetCDF4Array(BackendArray):
 
         array = self.get_array()
         self.shape = array.shape
+        self.ndim = len(self.shape)
+        import math
+        self.size = math.prod(self.shape)
 
         dtype = array.dtype
         if dtype is str:

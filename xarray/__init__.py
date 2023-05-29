@@ -51,6 +51,8 @@ except Exception:
     # Disable minimum version checks on downstream libraries.
     __version__ = "999"
 
+__version__ = "2023.05.0"
+
 # A hardcoded __all__ variable is necessary to appease
 # `mypy --strict` running in projects that import xarray.
 __all__ = (

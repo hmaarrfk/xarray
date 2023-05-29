@@ -604,6 +604,17 @@ class NDArrayMixin(NdimSizeLenMixin):
     def __repr__(self: Any) -> str:
         return f"{type(self).__name__}(array={self.array!r})"
 
+    @property
+    def ndim(self: Any) -> int:
+        """
+        Number of array dimensions.
+
+        See Also
+        --------
+        numpy.ndarray.ndim
+        """
+        return self.array.ndim
+
 
 class ReprObject:
     """Object that prints as the given value, for use with sentinel values."""

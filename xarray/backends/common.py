@@ -84,8 +84,14 @@ def robust_getitem(array, key, catch=Exception, max_retries=6, initial_delay=500
             time.sleep(1e-3 * next_delay)
 
 
-class BackendArray(NdimSizeLenMixin, indexing.ExplicitlyIndexed):
+class BackendArray(indexing.ExplicitlyIndexed):
     __slots__ = ()
+
+    def __len__(self: Any) -> int:
+        try:
+            return self.shape[0]
+        except IndexError:
+            raise TypeError("len() of unsized object")
 
     def get_duck_array(self, dtype: np.typing.DTypeLike = None):
         key = indexing.BasicIndexer((slice(None),) * self.ndim)
