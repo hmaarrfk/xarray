@@ -37,6 +37,7 @@ from xarray.backends.netCDF4_ import (
     _extract_nc4_variable_encoding,
     _get_datatype,
     _nc4_require_group,
+    create_vlen_dtype,
 )
 from xarray.backends.store import StoreBackendEntrypoint
 from xarray.core import indexing
@@ -59,6 +60,24 @@ if TYPE_CHECKING:
 
 
 class H5NetCDFArrayWrapper(BaseNetCDF4Array):
+    __slots__ = ()
+
+    def __init__(self, variable_name, datastore, shape=None, dtype=None):
+        if shape is None:
+            # slow path: fetch the variable to read its shape and dtype
+            super().__init__(variable_name, datastore)
+        else:
+            # fast path: shape and dtype already known by the caller, so avoid
+            # re-acquiring the store and re-reading them from the file
+            self.datastore = datastore
+            self.variable_name = variable_name
+            self.shape = shape
+            if dtype is str:
+                # see BaseNetCDF4Array.__init__ for why vlen strings use a
+                # dedicated object dtype
+                dtype = create_vlen_dtype(str)
+            self.dtype = dtype
+
     def get_array(self, needs_lock=True):
         ds = self.datastore._acquire(needs_lock)
         return ds.variables[self.variable_name]
@@ -92,6 +111,68 @@ def _read_attributes(h5netcdf_var):
                 )
         attrs[k] = v
     return attrs
+
+
+def _resolve_dimensions(ds):
+    """Resolve the dimension names of every variable in an h5netcdf group.
+
+    ``h5netcdf.Variable.dimensions`` resolves dimension scales one variable at
+    a time, dereferencing each axis' scale and reading its path name via an
+    HDF5 C round-trip -- which dominates the cost of opening files with many
+    variables. Here we build a single ``{hdf5 object address: dimension name}``
+    map for the group (and its ancestors) once, then resolve each variable's
+    ``DIMENSION_LIST`` against it, avoiding the per-variable name lookups.
+
+    Returns a ``{variable_name: dimensions}`` mapping, or ``None`` to signal
+    that the caller should fall back to ``var.dimensions``. Any variable whose
+    dimensions cannot be resolved cheaply falls back to ``var.dimensions`` for
+    that variable only, so the result is always equivalent to the slow path.
+    """
+    try:
+        import h5py
+
+        h5o = h5py.h5o
+        h5file = ds._root._h5file
+        all_dimensions = ds._all_dimensions
+        # address -> dimension name, including dimensions inherited from parents,
+        # and dimension name -> current size (handles unlimited dims like
+        # h5netcdf.Variable.shape does, since Dimension.size returns the max)
+        addr_map = {}
+        dim_sizes = {}
+        for name, dim in all_dimensions.items():
+            dim_sizes[name] = dim.size
+            h5ds = dim._h5ds
+            if h5ds is not None:
+                addr_map[h5o.get_info(h5ds.id).addr] = name
+    except (ImportError, AttributeError, TypeError):
+        # h5netcdf/h5py internals are not as expected; use the slow path
+        return None
+
+    out = {}
+    for k, var in ds.variables.items():
+        try:
+            h5ds = var._h5ds
+            attrs = h5ds.attrs
+            if (
+                "_Netcdf4Coordinates" in attrs
+                and attrs.get("CLASS") == b"DIMENSION_SCALE"
+            ):
+                # coordinate variable whose name collides with a dimension;
+                # let h5netcdf disambiguate
+                out[k] = var.dimensions
+            elif "DIMENSION_LIST" in attrs:
+                out[k] = tuple(
+                    addr_map[h5o.get_info(h5file[ref[-1]].id).addr]
+                    for ref in list(attrs["DIMENSION_LIST"])
+                )
+            else:
+                # unlabelled dataset: a dimension scale named after itself, or a
+                # phony dimension that only h5netcdf can name
+                child = h5ds.name.rsplit("/", 1)[-1]
+                out[k] = (child,) if child in all_dimensions else var.dimensions
+        except (AttributeError, KeyError, TypeError):
+            out[k] = var.dimensions
+    return out, dim_sizes
 
 
 _extract_h5nc_encoding = functools.partial(
@@ -278,35 +359,48 @@ class H5NetCDFStore(WritableCFDataStore):
     def open_store_variable(self, name, var):
         import h5netcdf.core
 
+        # Read metadata via the underlying h5py dataset, resolved once. Each
+        # h5netcdf property access otherwise re-resolves the h5py object (and,
+        # for shape, every dimension scale), which dominates open time for
+        # files with many variables. ``get_variables`` primes h5netcdf's
+        # dimension cache beforehand so that ``var.dimensions``/``var.shape``
+        # here are cheap.
+        h5ds = var._h5ds
         dimensions = var.dimensions
-        data = indexing.LazilyIndexedArray(H5NetCDFArrayWrapper(name, self))
+        shape = var.shape
+        dtype = h5ds.dtype
+        # mirror h5netcdf.Variable.chunks: scalars report no chunking
+        chunks = None if shape == () else h5ds.chunks
+
+        data = indexing.LazilyIndexedArray(
+            H5NetCDFArrayWrapper(name, self, shape=shape, dtype=dtype)
+        )
         attrs = _read_attributes(var)
 
         # netCDF4 specific encoding
         encoding = {
-            "chunksizes": var.chunks,
-            "fletcher32": var.fletcher32,
-            "shuffle": var.shuffle,
+            "chunksizes": chunks,
+            "fletcher32": h5ds.fletcher32,
+            "shuffle": h5ds.shuffle,
         }
-        if var.chunks:
-            encoding["preferred_chunks"] = dict(
-                zip(var.dimensions, var.chunks, strict=True)
-            )
+        if chunks:
+            encoding["preferred_chunks"] = dict(zip(dimensions, chunks, strict=True))
         # Convert h5py-style compression options to NetCDF4-Python
         # style, if possible
-        if var.compression == "gzip":
+        compression = h5ds.compression
+        if compression == "gzip":
             encoding["zlib"] = True
-            encoding["complevel"] = var.compression_opts
-        elif var.compression is not None:
-            encoding["compression"] = var.compression
-            encoding["compression_opts"] = var.compression_opts
+            encoding["complevel"] = h5ds.compression_opts
+        elif compression is not None:
+            encoding["compression"] = compression
+            encoding["compression_opts"] = h5ds.compression_opts
 
         # save source so __repr__ can detect if it's local or not
         encoding["source"] = self._filename
-        encoding["original_shape"] = data.shape
+        encoding["original_shape"] = shape
 
         h5py = var._root._h5py
-        vlen_dtype = h5py.check_dtype(vlen=var.dtype)
+        vlen_dtype = h5py.check_dtype(vlen=dtype)
         if vlen_dtype is str:
             encoding["dtype"] = str
         elif vlen_dtype is not None:  # pragma: no cover
@@ -318,20 +412,34 @@ class H5NetCDFStore(WritableCFDataStore):
             datatype, h5netcdf.core.EnumType
         ):
             encoding["dtype"] = np.dtype(
-                data.dtype,
+                dtype,
                 metadata={
                     "enum": datatype.enum_dict,
                     "enum_name": datatype.name,
                 },
             )
         else:
-            encoding["dtype"] = var.dtype
+            encoding["dtype"] = dtype
 
         return Variable(dimensions, data, attrs, encoding)
 
     def get_variables(self):
+        ds = self.ds
+        resolved = _resolve_dimensions(ds)
+        if resolved is not None:
+            dimensions_map, _ = resolved
+            for k, v in ds.variables.items():
+                dims = dimensions_map.get(k)
+                # Prime h5netcdf's own dimension cache so that resolving each
+                # variable's dimensions (and, through them, its shape) does not
+                # trigger a fresh, expensive per-variable lookup. We do not pass
+                # these to open_store_variable so that subclasses overriding it
+                # with the (name, var) signature keep working.
+                if dims is not None and v._dimensions is None:
+                    v._dimensions = dims
+
         return FrozenDict(
-            (k, self.open_store_variable(k, v)) for k, v in self.ds.variables.items()
+            (k, self.open_store_variable(k, v)) for k, v in ds.variables.items()
         )
 
     def get_attrs(self):
