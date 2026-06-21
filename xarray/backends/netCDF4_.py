@@ -580,6 +580,28 @@ class NetCDF4DataStore(WritableCFDataStore):
 
         return Variable(dimensions, data, attributes, encoding)
 
+    # --- cheap hooks for lazy opening (see backends.store / backends.lazy) ---
+    supports_lazy_load = True
+
+    def get_variable_names(self):
+        return list(self.ds.variables)
+
+    def get_dimension_names(self):
+        return list(self.ds.dimensions)
+
+    def get_coordinate_names(self):
+        # names referenced by any variable's "coordinates" attribute
+        coord_names: set = set()
+        for var in self.ds.variables.values():
+            if "coordinates" in var.ncattrs():
+                coords = var.getncattr("coordinates")
+                if isinstance(coords, str):
+                    coord_names.update(coords.split())
+        return coord_names
+
+    def open_store_variable_by_name(self, name):
+        return self.open_store_variable(name, self.ds.variables[name])
+
     def get_variables(self):
         return FrozenDict(
             (k, self.open_store_variable(k, v)) for k, v in self.ds.variables.items()

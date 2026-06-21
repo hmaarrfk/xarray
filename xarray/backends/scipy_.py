@@ -288,6 +288,28 @@ class ScipyDataStore(WritableCFDataStore):
             _decode_attrs(var._attributes),  # type: ignore[attr-defined]  # using private attribute
         )
 
+    # --- cheap hooks for lazy opening (see backends.store / backends.lazy) ---
+    supports_lazy_load = True
+
+    def get_variable_names(self):
+        return list(self.ds.variables)
+
+    def get_dimension_names(self):
+        return list(self.ds.dimensions)
+
+    def get_coordinate_names(self):
+        coord_names: set = set()
+        for var in self.ds.variables.values():
+            coords = var._attributes.get("coordinates")
+            if isinstance(coords, bytes):
+                coords = coords.decode("utf-8", "replace")
+            if isinstance(coords, str):
+                coord_names.update(coords.split())
+        return coord_names
+
+    def open_store_variable_by_name(self, name):
+        return self.open_store_variable(name, self.ds.variables[name])
+
     def get_variables(self) -> Frozen[str, Variable]:
         return FrozenDict(
             (k, self.open_store_variable(k, v)) for k, v in self.ds.variables.items()

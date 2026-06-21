@@ -954,6 +954,26 @@ class ZarrStore(AbstractWritableDataStore):
 
         return Variable(dimensions, data, attributes, encoding)
 
+    # --- cheap hooks for lazy opening (see backends.store / backends.lazy) ---
+    supports_lazy_load = True
+
+    def get_variable_names(self):
+        return list(self.array_keys())
+
+    def get_dimension_names(self):
+        return list(self.get_dimensions())
+
+    def get_coordinate_names(self):
+        coord_names: set = set()
+        for _key, array in self.arrays():
+            coords = dict(array.attrs).get("coordinates")
+            if isinstance(coords, str):
+                coord_names.update(coords.split())
+        return coord_names
+
+    def open_store_variable_by_name(self, name):
+        return self.open_store_variable(name)
+
     def get_variables(self):
         return FrozenDict((k, self.open_store_variable(k)) for k in self.array_keys())
 
