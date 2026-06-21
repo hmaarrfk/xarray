@@ -1312,8 +1312,13 @@ class Dataset(
                     k, self._variables[k], needed_dims
                 )
             else:
-                var_dims = set(self._variables[k].dims)
-                add_coord = k in self._coord_names and var_dims <= needed_dims
+                # check coordinate membership before reading the variable's
+                # dims, so a lazy variable is not materialized for a variable
+                # that cannot be a coordinate of this array
+                add_coord = (
+                    k in self._coord_names
+                    and set(self._variables[k].dims) <= needed_dims
+                )
 
             if add_coord:
                 coords[k] = self._variables[k]

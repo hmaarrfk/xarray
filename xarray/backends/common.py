@@ -329,6 +329,30 @@ class BackendArray(NdimSizeLenMixin, indexing.ExplicitlyIndexed):
 class AbstractDataStore:
     __slots__ = ()
 
+    #: Whether this store supports opening a dataset lazily: reading only the
+    #: names of variables/dimensions up front and reading each (non-coordinate)
+    #: variable on first access. A store opts in by setting this to ``True`` and
+    #: implementing ``get_variable_names``, ``get_dimension_names``,
+    #: ``get_coordinate_names`` and ``open_store_variable_by_name`` (see
+    #: ``backends.store._open_dataset_lazy`` and ``backends.lazy``).
+    supports_lazy_load: bool = False
+
+    def get_variable_names(self):  # pragma: no cover
+        """Return the names of all variables without reading their metadata."""
+        raise NotImplementedError()
+
+    def get_dimension_names(self):  # pragma: no cover
+        """Return the names of all dimensions."""
+        raise NotImplementedError()
+
+    def get_coordinate_names(self):
+        """Names referenced by any variable's ``coordinates`` attribute."""
+        return set()
+
+    def open_store_variable_by_name(self, name):  # pragma: no cover
+        """Read and decode a single variable by name."""
+        raise NotImplementedError()
+
     def get_child_store(self, group: str) -> Self:  # pragma: no cover
         """Get a store corresponding to the indicated child group."""
         raise NotImplementedError()

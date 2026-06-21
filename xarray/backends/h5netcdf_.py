@@ -423,6 +423,34 @@ class H5NetCDFStore(WritableCFDataStore):
 
         return Variable(dimensions, data, attrs, encoding)
 
+    # --- cheap hooks for lazy opening (see backends.store / backends.lazy) ---
+    supports_lazy_load = True
+
+    def get_variable_names(self):
+        return list(self.ds.variables)
+
+    def get_dimension_names(self):
+        return list(self.ds.dimensions)
+
+    def get_coordinate_names(self):
+        # names referenced by any variable's "coordinates" attribute (auxiliary
+        # coordinates). Read straight from the h5py group so we don't re-resolve
+        # each variable's underlying dataset (much cheaper for many variables).
+        import h5py
+
+        coord_names: set = set()
+        for obj in self.ds._h5group.values():
+            if isinstance(obj, h5py.Dataset):
+                coordinates = obj.attrs.get("coordinates")
+                if coordinates is not None:
+                    if isinstance(coordinates, bytes):
+                        coordinates = coordinates.decode("utf-8", "replace")
+                    coord_names.update(coordinates.split())
+        return coord_names
+
+    def open_store_variable_by_name(self, name):
+        return self.open_store_variable(name, self.ds.variables[name])
+
     def get_variables(self):
         ds = self.ds
         resolved = _resolve_dimensions(ds)

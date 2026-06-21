@@ -108,7 +108,13 @@ def _get_mtime(filename_or_obj):
 
 
 def _protect_dataset_variables_inplace(dataset: Dataset, cache: bool) -> None:
-    for name, variable in dataset.variables.items():
+    from xarray.backends.lazy import LazyVariable
+
+    for name, variable in dataset._variables.items():
+        if isinstance(variable, LazyVariable):
+            # data not read yet; protect it when the variable materializes
+            variable._set_protect(cache)
+            continue
         if name not in dataset._indexes:
             # no need to protect IndexVariable objects
             data: indexing.ExplicitlyIndexedNDArrayMixin
@@ -271,11 +277,29 @@ def _chunk_ds(
 
 
 def _maybe_create_default_indexes(ds):
+    from xarray.backends.lazy import LazyVariable
+
     to_index = {
         name: coord.variable
         for name, coord in ds.coords.items()
         if coord.dims == (name,) and name not in ds.xindexes
     }
+    if not to_index:
+        return ds
+
+    if any(isinstance(v, LazyVariable) for v in ds._variables.values()):
+        # lazy open: build the dimension-coordinate indexes in place rather than
+        # via assign_coords, which would materialize every (lazy) data variable
+        # (and recompute dimensions). The backend dataset is freshly built here
+        # and not yet shared, so mutating it is safe.
+        from xarray.core.indexes import create_default_index_implicit
+
+        for name, var in to_index.items():
+            index, index_vars = create_default_index_implicit(var, [name])
+            ds._variables.update(index_vars)
+            ds._indexes.update(dict.fromkeys(index_vars, index))
+        return ds
+
     return ds.assign_coords(Coordinates(to_index))
 
 
