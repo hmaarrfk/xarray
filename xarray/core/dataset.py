@@ -1295,12 +1295,21 @@ class Dataset(
 
     def _construct_dataarray(self, name: Hashable) -> DataArray:
         """Construct a DataArray by indexing this dataset"""
+        from xarray.backends.lazy import LazyVariable
         from xarray.core.dataarray import DataArray
 
         try:
             variable = self._variables[name]
         except KeyError:
             _, name, variable = _get_virtual_variable(self._variables, name, self.sizes)
+        else:
+            if isinstance(variable, LazyVariable):
+                # the accessed variable is being read now; replace it with a
+                # plain Variable (sharing its data) so it is indistinguishable in
+                # type from an eagerly read one and stays consistent with the
+                # copy held by this dataset
+                variable = variable.to_base_variable()
+                self._variables[name] = variable
 
         needed_dims = set(variable.dims)
 
